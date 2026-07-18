@@ -4,7 +4,7 @@ import "jspdf-autotable";
 import * as XLSX from "xlsx";
 
 const ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbzcrH-lUdHF7vI6kmYf7emvV6bfbLmPCESJ-sJaxImp6YIzIQGlv94_S22wP0uK7R8i/exec";
+  "https://script.google.com/macros/s/AKfycbxK6Q7aMh3jSdXRoECHPd6j1r8ECZtjOeetRztgNZ4nE7OtKoIjHJ0b40mU5RyHomgzDw/exec";
 
 interface Attendance {
   id: number;
@@ -96,6 +96,13 @@ interface Mapel {
   mapel: string;
 }
 
+interface MateriData {
+  paket: string;
+  mapel: string;
+  kelas: string;
+  link: string;
+}
+
 interface ProcessedAttendance extends Attendance {
   processedPhoto?: string | null;
 }
@@ -112,7 +119,8 @@ const App: React.FC = () => {
     | "teacherForm"
     | "teacherData"
     | "monthlyRecap"
-    | "mapelData" // ✅ TAMBAHKAN INI
+    | "mapelData"
+    | "materi"
   >("form");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [attendances, setAttendances] = useState<Attendance[]>([]);
@@ -234,6 +242,11 @@ const App: React.FC = () => {
   const [mapelData, setMapelData] = useState<Mapel[]>([]);
   const [selectedMapel, setSelectedMapel] = useState("");
   const [loadingMapel, setLoadingMapel] = useState(false);
+  const [materiData, setMateriData] = useState<MateriData[]>([]);
+  const [loadingMateri, setLoadingMateri] = useState(false);
+  const [filterKelasMateri, setFilterKelasMateri] = useState("");
+  const [filterMapelMateri, setFilterMapelMateri] = useState("");
+  const [filterPaketMateri, setFilterPaketMateri] = useState("");
   const [editMapel, setEditMapel] = useState<Mapel | null>(null); // Untuk mode edit
   const [deleteMapelId, setDeleteMapelId] = useState<string | null>(null); // Untuk konfirmasi hapus
   const [showAddMapelModal, setShowAddMapelModal] = useState(false);
@@ -301,6 +314,25 @@ const App: React.FC = () => {
     }
   };
 
+  const fetchMateriData = async () => {
+    setLoadingMateri(true);
+    try {
+      const response = await fetch(`${ENDPOINT}?action=getMateriData`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setMateriData(data.data);
+        } else {
+          console.error("Gagal ambil data materi:", data.message);
+        }
+      }
+    } catch (error) {
+      console.error("Error fetching materi data:", error);
+    } finally {
+      setLoadingMateri(false);
+    }
+  };
+
   useEffect(() => {
     const now = new Date();
     const makassarTime = new Intl.DateTimeFormat("id-ID", {
@@ -345,6 +377,7 @@ const App: React.FC = () => {
 
     // Panggil fetchMapelData
     fetchMapelData();
+    fetchMateriData();
 
     // Cek status absensi siswa jika sudah login sebagai siswa
     if (isLoggedIn && userRole === "Siswa" && form.nisn && selectedMapel) {
@@ -2012,6 +2045,7 @@ const App: React.FC = () => {
       | "teacherData"
       | "monthlyRecap"
       | "mapelData" // 👈 TAMBAHKAN INI!
+      | "materi" // 👈 TAMBAHKAN INI
   ) => {
     setCurrentPage(page);
     if (page === "data") {
@@ -2033,6 +2067,7 @@ const App: React.FC = () => {
       | "teacherData"
       | "monthlyRecap"
       | "mapelData" // ✅ TAMBAHKAN INI
+      | "materi" // 👈 TAMBAHKAN INI
   ) => {
     handlePageChange(page);
     setIsMenuOpen(false);
@@ -5383,6 +5418,168 @@ const App: React.FC = () => {
     );
   };
 
+  const renderMateriPage = () => {
+    // Opsi unik untuk filter (khusus Guru)
+    const uniqueKelasMateri = [
+      ...new Set(materiData.map((m) => m.kelas).filter(Boolean)),
+    ];
+    const uniqueMapelMateri = [
+      ...new Set(materiData.map((m) => m.mapel).filter(Boolean)),
+    ];
+    const uniquePaketMateri = [
+      ...new Set(materiData.map((m) => m.paket).filter(Boolean)),
+    ];
+
+    let filteredMateri: MateriData[] = [];
+
+    if (userRole === "Siswa") {
+      // Otomatis sesuai data kelas & mapel yang diisi siswa di form
+      const kelasSiswa = (form.class || "").toString().trim().toLowerCase();
+      const mapelSiswa = (form.mapel || "").toString().trim().toLowerCase();
+
+      filteredMateri = materiData.filter((m) => {
+        const matchKelas = kelasSiswa
+          ? m.kelas.trim().toLowerCase() === kelasSiswa
+          : true;
+        const matchMapel = mapelSiswa
+          ? m.mapel.trim().toLowerCase() === mapelSiswa
+          : true;
+        return matchKelas && matchMapel;
+      });
+    } else {
+      // Guru bisa filter manual
+      filteredMateri = materiData.filter((m) => {
+        const matchKelas = filterKelasMateri
+          ? m.kelas === filterKelasMateri
+          : true;
+        const matchMapel = filterMapelMateri
+          ? m.mapel === filterMapelMateri
+          : true;
+        const matchPaket = filterPaketMateri
+          ? m.paket === filterPaketMateri
+          : true;
+        return matchKelas && matchMapel && matchPaket;
+      });
+    }
+
+    return (
+      <div className="bg-white shadow-lg rounded-lg p-6">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">
+          Materi Pelajaran
+        </h2>
+
+        {userRole === "Siswa" && (
+          <div className="mb-4 text-sm text-gray-600 bg-blue-50 border border-blue-200 rounded-lg p-3">
+            Menampilkan materi untuk Kelas <strong>{form.class || "-"}</strong>{" "}
+            - Mapel <strong>{form.mapel || "-"}</strong>
+          </div>
+        )}
+
+        {userRole === "Guru" && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Filter Kelas
+              </label>
+              <select
+                value={filterKelasMateri}
+                onChange={(e) => setFilterKelasMateri(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Semua Kelas</option>
+                {uniqueKelasMateri.map((kelas, index) => (
+                  <option key={index} value={kelas}>
+                    {kelas}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Filter Mata Pelajaran
+              </label>
+              <select
+                value={filterMapelMateri}
+                onChange={(e) => setFilterMapelMateri(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Semua Mata Pelajaran</option>
+                {uniqueMapelMateri.map((mapel, index) => (
+                  <option key={index} value={mapel}>
+                    {mapel}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Filter Paket
+              </label>
+              <select
+                value={filterPaketMateri}
+                onChange={(e) => setFilterPaketMateri(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Semua Paket</option>
+                {uniquePaketMateri.map((paket, index) => (
+                  <option key={index} value={paket}>
+                    {paket}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {loadingMateri ? (
+          <div className="text-center py-8">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <p className="mt-2 text-gray-600">Memuat data materi...</p>
+          </div>
+        ) : filteredMateri.length === 0 ? (
+          <div className="p-6 text-center text-gray-500 italic bg-gray-50 border border-gray-200 rounded-lg">
+            Tidak ada materi yang tersedia
+            {userRole === "Siswa"
+              ? " untuk kelas dan mata pelajaran Anda."
+              : " untuk filter ini."}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left text-gray-700">
+              <thead className="text-xs uppercase bg-gray-200">
+                <tr>
+                  <th className="px-4 py-2">Paket</th>
+                  <th className="px-4 py-2">Mata Pelajaran</th>
+                  <th className="px-4 py-2">Kelas</th>
+                  <th className="px-4 py-2">Materi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredMateri.map((materi, index) => (
+                  <tr key={index} className="border-b hover:bg-gray-50">
+                    <td className="px-4 py-2">{materi.paket || "-"}</td>
+                    <td className="px-4 py-2">{materi.mapel}</td>
+                    <td className="px-4 py-2">{materi.kelas}</td>
+                    <td className="px-4 py-2">
+                      <a
+                        href={materi.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-block bg-blue-600 text-white px-3 py-1 rounded-lg hover:bg-blue-700 transition duration-200 text-xs"
+                      >
+                        📖 Buka Materi
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderTeacherDataPage = () => (
     <div className="bg-white shadow-lg rounded-lg p-6">
       <div className="mb-4 flex justify-between items-center">
@@ -5675,6 +5872,17 @@ const App: React.FC = () => {
                         >
                           📚 Data Mata Pelajaran
                         </button>
+                        {/* 👈 TAMBAHKAN INI: Tombol Materi Pelajaran */}
+                        <button
+                          onClick={() => handleMenuItemClick("materi")}
+                          className={`block w-full text-left px-4 py-2 rounded-md transition duration-200 ${
+                            currentPage === "materi"
+                              ? "bg-blue-600 text-white"
+                              : "text-gray-600 hover:bg-gray-100"
+                          }`}
+                        >
+                          📖 Materi Pelajaran
+                        </button>
                       </div>
                     )}
                   </>
@@ -5691,6 +5899,18 @@ const App: React.FC = () => {
                         }`}
                       >
                         📝 Form Absensi
+                      </button>
+                    )}
+                    {userRole === "Siswa" && (
+                      <button
+                        onClick={() => handlePageChange("materi")}
+                        className={`px-6 py-2 rounded-md transition duration-200 ${
+                          currentPage === "materi"
+                            ? "bg-blue-600 text-white"
+                            : "text-gray-600 hover:bg-gray-100"
+                        }`}
+                      >
+                        📖 Materi Pelajaran
                       </button>
                     )}
                     {userRole === "Kepala Sekolah" && (
@@ -5731,6 +5951,9 @@ const App: React.FC = () => {
               ? renderMonthlyRecapPage()
               : currentPage === "mapelData" && userRole === "Guru" // ✅ TAMBAHKAN INI
               ? renderMapelDataPage()
+              : currentPage === "materi" &&
+                (userRole === "Guru" || userRole === "Siswa") // 👈 TAMBAHKAN INI
+              ? renderMateriPage()
               : null}
           </>
         )}

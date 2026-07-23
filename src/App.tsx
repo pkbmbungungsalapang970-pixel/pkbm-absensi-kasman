@@ -630,7 +630,7 @@ const App: React.FC = () => {
     }
   };
 
-  const fetchStudentLocation = () => {
+  const fetchStudentLocation = (useHighAccuracy: boolean = true) => {
     if (!navigator.geolocation) {
       setLocationError("Perangkat/browser tidak mendukung GPS.");
       return;
@@ -660,15 +660,35 @@ const App: React.FC = () => {
         setIsFetchingLocation(false);
       },
       (error) => {
-        console.error("Geolocation error:", error);
-        setLocationError(
-          error.code === 1
-            ? "Akses lokasi ditolak. Aktifkan izin lokasi/GPS di HP untuk bisa absen."
-            : "Gagal mendapatkan lokasi. Pastikan GPS aktif dan coba lagi."
-        );
+        console.error("Geolocation error:", error.code, error.message);
+
+        // ✅ Jika high accuracy gagal karena timeout, coba lagi dengan low accuracy (network-based)
+        if (useHighAccuracy && (error.code === 3 || error.code === 2)) {
+          console.log("Retry dengan low accuracy...");
+          fetchStudentLocation(false);
+          return;
+        }
+
+        let message = "Gagal mendapatkan lokasi.";
+        if (error.code === 1) {
+          message =
+            "Akses lokasi ditolak. Buka Pengaturan HP > Aplikasi > Browser (Chrome) > Izin > Lokasi, pastikan diatur ke 'Izinkan'. Pastikan juga Location/GPS di HP sudah aktif.";
+        } else if (error.code === 2) {
+          message =
+            "Posisi tidak tersedia. Pastikan GPS/Location Services di HP aktif dan coba di area terbuka (di luar ruangan).";
+        } else if (error.code === 3) {
+          message =
+            "Waktu tunggu GPS habis. Coba di area terbuka dengan sinyal lebih baik, atau tunggu beberapa detik lalu coba lagi.";
+        }
+
+        setLocationError(message);
         setIsFetchingLocation(false);
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      {
+        enableHighAccuracy: useHighAccuracy,
+        timeout: useHighAccuracy ? 20000 : 10000,
+        maximumAge: useHighAccuracy ? 0 : 60000,
+      }
     );
   };
 

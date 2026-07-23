@@ -272,6 +272,15 @@ const App: React.FC = () => {
   const [isManualDate, setIsManualDate] = useState(false);
   const [isCheckingAttendance, setIsCheckingAttendance] = useState(false);
 
+  const [studentLocation, setStudentLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    address: string;
+  } | null>(null);
+  const [locationError, setLocationError] = useState<string>("");
+  const [isFetchingLocation, setIsFetchingLocation] = useState(false);
+
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const fromPKBM = urlParams.get("from") === "pkbm";
@@ -476,6 +485,13 @@ const App: React.FC = () => {
     };
   }, [isLoggedIn, userRole, form.nisn, isManualTime, isManualDate]); // ✅ Tambahkan isManualTime ke dependency
 
+  // Auto aktifkan GPS saat siswa membuka halaman form absensi
+  useEffect(() => {
+    if (isLoggedIn && userRole === "Siswa" && currentPage === "form") {
+      fetchStudentLocation();
+    }
+  }, [isLoggedIn, userRole, currentPage]);
+
   // Auto-polling untuk halaman data absensi
   useEffect(() => {
     let pollingInterval: ReturnType<typeof setInterval> | null = null;
@@ -612,6 +628,48 @@ const App: React.FC = () => {
     } finally {
       setIsCheckingAttendance(false); // ✅ Set loading jadi false setelah selesai
     }
+  };
+
+  const fetchStudentLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationError("Perangkat/browser tidak mendukung GPS.");
+      return;
+    }
+
+    setIsFetchingLocation(true);
+    setLocationError("");
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude, accuracy } = position.coords;
+        let address = "Alamat tidak ditemukan";
+
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            address = data.display_name || address;
+          }
+        } catch (err) {
+          console.error("Gagal reverse geocode:", err);
+        }
+
+        setStudentLocation({ latitude, longitude, accuracy, address });
+        setIsFetchingLocation(false);
+      },
+      (error) => {
+        console.error("Geolocation error:", error);
+        setLocationError(
+          error.code === 1
+            ? "Akses lokasi ditolak. Aktifkan izin lokasi/GPS di HP untuk bisa absen."
+            : "Gagal mendapatkan lokasi. Pastikan GPS aktif dan coba lagi."
+        );
+        setIsFetchingLocation(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
   };
 
   const handleTeacherFormInputChange = (
@@ -906,6 +964,129 @@ const App: React.FC = () => {
     });
   };
 
+  const compressImageWithLocationStamp = (
+    file: File,
+    location: typeof studentLocation,
+    targetSizeMB: number = 0.8
+  ): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const reader = new FileReader();
+
+      reader.onload = (e) => {
+        img.src = e.target?.result as string;
+      };
+
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("Canvas context not supported"));
+          return;
+        }
+
+        let width = img.width;
+        let height = img.height;
+        const MAX_DIMENSION = 1280;
+
+        if (width > height && width > MAX_DIMENSION) {
+          height = Math.round((height * MAX_DIMENSION) / width);
+          width = MAX_DIMENSION;
+        } else if (height > MAX_DIMENSION) {
+          width = Math.round((width * MAX_DIMENSION) / height);
+          height = MAX_DIMENSION;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(img, 0, 0, width, height);
+
+        if (location) {
+          const timestamp = new Date().toLocaleString("id-ID", {
+            timeZone: "Asia/Makassar",
+            dateStyle: "medium",
+            timeStyle: "medium",
+          });
+
+          const rawLines = [
+            timestamp,
+            `Lat: ${location.latitude.toFixed(
+              6
+            )}, Long: ${location.longitude.toFixed(6)}`,
+            `Akurasi: ±${Math.round(location.accuracy)}m`,
+            location.address,
+          ];
+
+          const fontSize = Math.max(12, Math.round(width * 0.028));
+          ctx.font = `${fontSize}px Arial`;
+          const lineHeight = fontSize * 1.4;
+          const padding = 10;
+
+          const wrappedLines: string[] = [];
+          rawLines.forEach((line, idx) => {
+            if (idx === rawLines.length - 1) {
+              const maxWidth = width - padding * 2;
+              let current = "";
+              line.split(" ").forEach((word) => {
+                const test = current ? `${current} ${word}` : word;
+                if (ctx.measureText(test).width > maxWidth && current) {
+                  wrappedLines.push(current);
+                  current = word;
+                } else {
+                  current = test;
+                }
+              });
+              if (current) wrappedLines.push(current);
+            } else {
+              wrappedLines.push(line);
+            }
+          });
+
+          const boxHeight = wrappedLines.length * lineHeight + padding * 2;
+          ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+          ctx.fillRect(0, height - boxHeight, width, boxHeight);
+
+          ctx.fillStyle = "#ffffff";
+          wrappedLines.forEach((line, i) => {
+            ctx.fillText(
+              line,
+              padding,
+              height -
+                boxHeight +
+                padding +
+                lineHeight * (i + 1) -
+                fontSize * 0.3
+            );
+          });
+        }
+
+        let quality = 0.7;
+        const minQuality = 0.1;
+        const step = 0.1;
+        const targetSizeBytes = targetSizeMB * 1024 * 1024;
+
+        const tryCompress = () => {
+          const dataUrl = canvas.toDataURL("image/jpeg", quality);
+          const base64 = dataUrl.split(",").slice(-1)[0];
+          const byteLength = Math.round((base64.length * 3) / 4);
+
+          if (byteLength <= targetSizeBytes || quality <= minQuality) {
+            resolve(base64);
+          } else {
+            quality -= step;
+            setTimeout(tryCompress, 0);
+          }
+        };
+
+        tryCompress();
+      };
+
+      img.onerror = reject;
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleFileSelect = async (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -930,6 +1111,18 @@ const App: React.FC = () => {
         return;
       }
 
+      if (!studentLocation) {
+        setForm(
+          (prev: FormState): FormState => ({
+            ...prev,
+            error:
+              "Lokasi GPS belum terdeteksi. Aktifkan izin lokasi lalu coba lagi.",
+          })
+        );
+        fetchStudentLocation();
+        return;
+      }
+
       try {
         setForm(
           (prev: FormState): FormState => ({
@@ -939,7 +1132,11 @@ const App: React.FC = () => {
           })
         );
 
-        const base64 = await compressImage(file, 0.8);
+        const base64 = await compressImageWithLocationStamp(
+          file,
+          studentLocation,
+          0.8
+        );
         const compressedSizeKB = Math.round((base64.length * 3) / 4 / 1024);
         console.log(`Ukuran gambar setelah kompresi: ${compressedSizeKB} KB`);
 
@@ -2385,6 +2582,35 @@ const App: React.FC = () => {
 
       <div className="space-y-4">
         <div className="grid grid-cols-1 gap-4">
+          <div className="mb-2">
+            {isFetchingLocation && (
+              <div className="bg-blue-100 border border-blue-300 text-blue-800 text-xs px-3 py-2 rounded-lg">
+                📍 Mendeteksi lokasi GPS...
+              </div>
+            )}
+            {!isFetchingLocation && studentLocation && (
+              <div className="bg-green-100 border border-green-300 text-green-800 text-xs px-3 py-2 rounded-lg">
+                📍 Lokasi terdeteksi: {studentLocation.address}
+                <br />
+                Lat: {studentLocation.latitude.toFixed(6)}, Long:{" "}
+                {studentLocation.longitude.toFixed(6)} (±
+                {Math.round(studentLocation.accuracy)}m)
+              </div>
+            )}
+            {!isFetchingLocation && locationError && (
+              <div className="bg-red-100 border border-red-300 text-red-800 text-xs px-3 py-2 rounded-lg flex items-center justify-between gap-2">
+                <span>⚠️ {locationError}</span>
+                <button
+                  type="button"
+                  onClick={fetchStudentLocation}
+                  className="underline whitespace-nowrap"
+                >
+                  Coba Lagi
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <input
               type="text"

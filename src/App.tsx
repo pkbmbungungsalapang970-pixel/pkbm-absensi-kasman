@@ -2622,7 +2622,7 @@ const App: React.FC = () => {
                 <span>⚠️ {locationError}</span>
                 <button
                   type="button"
-                  onClick={fetchStudentLocation}
+                  onClick={() => fetchStudentLocation()}
                   className="underline whitespace-nowrap"
                 >
                   Coba Lagi

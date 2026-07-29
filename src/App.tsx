@@ -1381,9 +1381,6 @@ const App: React.FC = () => {
         setForm(
           (prev: FormState): FormState => ({
             ...prev,
-            class: "",
-            name: "",
-            nisn: "",
             photo: null,
             photoBase64: null,
             error: "",
@@ -1393,6 +1390,13 @@ const App: React.FC = () => {
 
         console.log("Absensi berhasil disimpan!");
         alert("Absensi berhasil disimpan!");
+
+        // 👇 Update status secara langsung tanpa fetch ulang ke server (instan, tidak lambat)
+        setStudentAttendanceStatus({
+          hasAttended: true,
+          attendanceDate: form.date,
+          attendedMapel: form.mapel || "",
+        });
       } else {
         throw new Error("Unexpected response type");
       }
@@ -2686,60 +2690,62 @@ const App: React.FC = () => {
             className="w-full p-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-700 disabled:opacity-50"
           />
 
-          <div className="space-y-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleFileSelect}
-              disabled={isCheckingAttendance} // ✅ Disable saat loading
-              style={{ display: "none" }}
-            />
+          {!studentAttendanceStatus.hasAttended && (
+            <div className="space-y-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileSelect}
+                disabled={isCheckingAttendance} // ✅ Disable saat loading
+                style={{ display: "none" }}
+              />
 
-            {!form.photo && (
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={openCameraApp}
-                  disabled={form.loading || isCheckingAttendance} // ✅ Disable saat loading
-                  className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition duration-200 flex items-center justify-center disabled:opacity-50"
-                >
-                  {form.loading ? "⏳ Memproses..." : "📸 Buka Kamera HP"}
-                </button>
-                <div className="text-xs text-gray-500 text-center">
-                  Akan membuka aplikasi kamera HP Anda
-                </div>
-              </div>
-            )}
-
-            {form.photo && (
-              <div className="space-y-2">
-                <img
-                  src={form.photo}
-                  alt="Preview foto"
-                  className="w-full h-64 object-cover rounded-lg border-2 border-green-300"
-                />
-                <div className="flex space-x-2">
-                  <button
-                    type="button"
-                    onClick={retakePhoto}
-                    disabled={isCheckingAttendance} // ✅ Disable saat loading
-                    className="flex-1 bg-yellow-600 text-white p-2 rounded-lg hover:bg-yellow-700 transition duration-200 disabled:opacity-50"
-                  >
-                    📸 Ambil Ulang
-                  </button>
+              {!form.photo && (
+                <div className="space-y-2">
                   <button
                     type="button"
                     onClick={openCameraApp}
-                    disabled={isCheckingAttendance} // ✅ Disable saat loading
-                    className="flex-1 bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 transition duration-200 disabled:opacity-50"
+                    disabled={form.loading || isCheckingAttendance} // ✅ Disable saat loading
+                    className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition duration-200 flex items-center justify-center disabled:opacity-50"
                   >
-                    📷 Foto Lain
+                    {form.loading ? "⏳ Memproses..." : "📸 Buka Kamera HP"}
                   </button>
+                  <div className="text-xs text-gray-500 text-center">
+                    Akan membuka aplikasi kamera HP Anda
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+
+              {form.photo && (
+                <div className="space-y-2">
+                  <img
+                    src={form.photo}
+                    alt="Preview foto"
+                    className="w-full h-64 object-cover rounded-lg border-2 border-green-300"
+                  />
+                  <div className="flex space-x-2">
+                    <button
+                      type="button"
+                      onClick={retakePhoto}
+                      disabled={isCheckingAttendance} // ✅ Disable saat loading
+                      className="flex-1 bg-yellow-600 text-white p-2 rounded-lg hover:bg-yellow-700 transition duration-200 disabled:opacity-50"
+                    >
+                      📸 Ambil Ulang
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openCameraApp}
+                      disabled={isCheckingAttendance} // ✅ Disable saat loading
+                      className="flex-1 bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 transition duration-200 disabled:opacity-50"
+                    >
+                      📷 Foto Lain
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {form.error && (
@@ -2760,7 +2766,11 @@ const App: React.FC = () => {
             type="button"
             onClick={handleSubmit}
             disabled={!form.photoBase64 || form.loading || isCheckingAttendance} // ✅ Disable saat loading
-            className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`w-full p-3 rounded-lg transition duration-200 ${
+              !form.photoBase64 || form.loading || isCheckingAttendance
+                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                : "bg-blue-600 text-white hover:bg-blue-700"
+            }`}
           >
             {form.loading ? "⏳ Menyimpan..." : "✅ Tambah Absen"}
           </button>

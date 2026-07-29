@@ -4,7 +4,7 @@ import "jspdf-autotable";
 import * as XLSX from "xlsx";
 
 const ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbxK6Q7aMh3jSdXRoECHPd6j1r8ECZtjOeetRztgNZ4nE7OtKoIjHJ0b40mU5RyHomgzDw/exec";
+  "https://script.google.com/macros/s/AKfycbx069Kn8FB4MnWU1NH3nHjdgNNH0eWK-2JQUTPt9dFUZxY2wfOzKZbHXjeo-4euBPJ4/exec";
 
 interface Attendance {
   id: number;
@@ -100,6 +100,7 @@ interface MateriData {
   paket: string;
   mapel: string;
   kelas: string;
+  modul: string;
   link: string;
 }
 
@@ -5814,27 +5815,34 @@ const App: React.FC = () => {
                   <th className="px-4 py-2">Paket</th>
                   <th className="px-4 py-2">Mata Pelajaran</th>
                   <th className="px-4 py-2">Kelas</th>
+                  <th className="px-4 py-2">Modul</th>
                   <th className="px-4 py-2">Materi</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredMateri.map((materi, index) => (
-                  <tr key={index} className="border-b hover:bg-gray-50">
-                    <td className="px-4 py-2">{materi.paket || "-"}</td>
-                    <td className="px-4 py-2">{materi.mapel}</td>
-                    <td className="px-4 py-2">{materi.kelas}</td>
-                    <td className="px-4 py-2">
-                      <a
-                        href={materi.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-block bg-blue-600 text-white px-3 py-1 rounded-lg hover:bg-blue-700 transition duration-200 text-xs"
-                      >
-                        📖 Buka Materi
-                      </a>
-                    </td>
-                  </tr>
-                ))}
+                {[...filteredMateri]
+                  .sort(
+                    (a, b) =>
+                      (parseInt(a.modul) || 0) - (parseInt(b.modul) || 0)
+                  )
+                  .map((materi, index) => (
+                    <tr key={index} className="border-b hover:bg-gray-50">
+                      <td className="px-4 py-2">{materi.paket || "-"}</td>
+                      <td className="px-4 py-2">{materi.mapel}</td>
+                      <td className="px-4 py-2">{materi.kelas}</td>
+                      <td className="px-4 py-2">{materi.modul || "-"}</td>
+                      <td className="px-4 py-2">
+                        <a
+                          href={materi.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block bg-blue-600 text-white px-3 py-1 rounded-lg hover:bg-blue-700 transition duration-200 text-xs"
+                        >
+                          📖 Buka Materi
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>

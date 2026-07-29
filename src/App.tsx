@@ -1454,6 +1454,13 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
+    // 👇 Jika Siswa, langsung redirect duluan SEBELUM state apa pun diubah
+    // agar tidak sempat render ulang ke halaman login lokal
+    if (userRole === "Siswa") {
+      window.location.href = "https://app-siswa-pkbm.netlify.app/";
+      return;
+    }
+
     setIsLoggedIn(false);
     setUserRole(null);
     setCurrentPage("form");

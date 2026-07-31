@@ -486,9 +486,13 @@ const App: React.FC = () => {
     };
   }, [isLoggedIn, userRole, form.nisn, isManualTime, isManualDate]); // ✅ Tambahkan isManualTime ke dependency
 
-  // Auto aktifkan GPS saat siswa membuka halaman form absensi
+  // Auto aktifkan GPS saat siswa/guru membuka halaman form absensi
   useEffect(() => {
-    if (isLoggedIn && userRole === "Siswa" && currentPage === "form") {
+    if (
+      isLoggedIn &&
+      ((userRole === "Siswa" && currentPage === "form") ||
+        (userRole === "Guru" && currentPage === "teacherForm"))
+    ) {
       fetchStudentLocation();
     }
   }, [isLoggedIn, userRole, currentPage]);
@@ -1246,7 +1250,9 @@ const App: React.FC = () => {
           })
         );
 
-        const base64 = await compressImage(file, 0.8);
+        const base64 = studentLocation
+          ? await compressImageWithLocationStamp(file, studentLocation, 0.8)
+          : await compressImage(file, 0.8);
         const photoURL = URL.createObjectURL(file);
 
         setTeacherPhoto(photoURL);
@@ -3232,6 +3238,35 @@ const App: React.FC = () => {
               <h4 className="font-medium mb-2 text-gray-700">
                 Foto Kelas (Opsional)
               </h4>
+
+              <div className="mb-2">
+                {isFetchingLocation && (
+                  <div className="bg-blue-100 border border-blue-300 text-blue-800 text-xs px-3 py-2 rounded-lg">
+                    📍 Mendeteksi lokasi GPS...
+                  </div>
+                )}
+                {!isFetchingLocation && studentLocation && (
+                  <div className="bg-green-100 border border-green-300 text-green-800 text-xs px-3 py-2 rounded-lg">
+                    📍 Lokasi terdeteksi: {studentLocation.address}
+                    <br />
+                    Lat: {studentLocation.latitude.toFixed(6)}, Long:{" "}
+                    {studentLocation.longitude.toFixed(6)} (±
+                    {Math.round(studentLocation.accuracy)}m)
+                  </div>
+                )}
+                {!isFetchingLocation && locationError && (
+                  <div className="bg-red-100 border border-red-300 text-red-800 text-xs px-3 py-2 rounded-lg flex items-center justify-between gap-2">
+                    <span>⚠️ {locationError}</span>
+                    <button
+                      type="button"
+                      onClick={() => fetchStudentLocation()}
+                      className="underline whitespace-nowrap"
+                    >
+                      Coba Lagi
+                    </button>
+                  </div>
+                )}
+              </div>
 
               <input
                 ref={teacherPhotoInputRef}

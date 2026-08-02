@@ -448,7 +448,6 @@ const App: React.FC = () => {
 
     // Panggil fetchMapelData
     fetchMapelData();
-    fetchMateriData();
 
     // Cek status absensi siswa jika sudah login sebagai siswa
     if (isLoggedIn && userRole === "Siswa" && form.nisn && selectedMapel) {
@@ -585,6 +584,13 @@ const App: React.FC = () => {
     }
     if (currentPage === "tugasData" && userRole === "Guru") {
       fetchTugasData();
+    }
+    if (
+      isLoggedIn &&
+      currentPage === "materi" &&
+      (userRole === "Guru" || userRole === "Siswa")
+    ) {
+      fetchMateriData();
     }
   }, [isLoggedIn, userRole, currentPage]);
 

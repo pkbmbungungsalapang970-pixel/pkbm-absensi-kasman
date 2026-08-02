@@ -588,45 +588,29 @@ const App: React.FC = () => {
     }
   }, [isLoggedIn, userRole, currentPage]);
 
-  // Auto-polling untuk halaman data absensi — aktif jika:
-  // (Bulan + Mapel + Kelas semuanya terisi) ATAU (Tanggal saja terisi)
+  // Auto-fetch + auto-polling untuk halaman data absensi.
+  // ✅ PENTING: efek ini HANYA bergantung pada currentPage/userRole/isLoggedIn,
+  // BUKAN pada filter (selectedMonth/selectedMapel/selectedClass/selectedDate).
+  // Artinya: fetch ke server terjadi SATU KALI saat halaman "data" diakses,
+  // lalu di-refresh otomatis tiap 5 detik oleh polling (tanpa spinner).
+  // Mengubah filter TIDAK memicu fetch baru ke server — filter hanya
+  // menyaring data yang sudah ada di browser (lihat renderDataPage,
+  // bagian .filter() pada attendanceData).
   useEffect(() => {
     let pollingInterval: ReturnType<typeof setInterval> | null = null;
 
-    const hasFullFilter = !!(selectedMonth && selectedMapel && selectedClass);
-    const hasDateOnly = !!selectedDate;
-    const filtersReady = hasFullFilter || hasDateOnly;
-
-    if (
-      currentPage === "data" &&
-      userRole === "Guru" &&
-      isLoggedIn &&
-      filtersReady
-    ) {
+    if (currentPage === "data" && userRole === "Guru" && isLoggedIn) {
       setIsPolling(true);
 
-      // Kirim hanya filter yang benar-benar terisi
-      const activeFilters: {
-        month?: string;
-        mapel?: string;
-        class?: string;
-        date?: string;
-      } = {};
-      if (selectedMonth) activeFilters.month = selectedMonth;
-      if (selectedMapel) activeFilters.mapel = selectedMapel;
-      if (selectedClass) activeFilters.class = selectedClass;
-      if (selectedDate) activeFilters.date = selectedDate;
+      // Fetch tanpa filter — ambil semua data sekali saat halaman dibuka
+      fetchAttendanceData(true);
 
-      fetchAttendanceData(false, activeFilters);
-
+      // Polling berikutnya tanpa spinner, tetap tanpa filter
       pollingInterval = setInterval(() => {
-        fetchAttendanceData(false, activeFilters);
+        fetchAttendanceData(false);
       }, 5000);
     } else {
       setIsPolling(false);
-      if (currentPage === "data" && !filtersReady) {
-        setAttendanceData([]); // kosongkan sampai salah satu syarat filter terpenuhi
-      }
     }
 
     return () => {
@@ -635,15 +619,7 @@ const App: React.FC = () => {
         setIsPolling(false);
       }
     };
-  }, [
-    currentPage,
-    userRole,
-    isLoggedIn,
-    selectedMonth,
-    selectedMapel,
-    selectedClass,
-    selectedDate,
-  ]);
+  }, [currentPage, userRole, isLoggedIn]);
 
   useEffect(() => {
     if (currentPage === "monthlyRecap" && userRole === "Guru") {

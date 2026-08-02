@@ -4,7 +4,7 @@ import "jspdf-autotable";
 import * as XLSX from "xlsx";
 
 const ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbx069Kn8FB4MnWU1NH3nHjdgNNH0eWK-2JQUTPt9dFUZxY2wfOzKZbHXjeo-4euBPJ4/exec";
+  "https://script.google.com/macros/s/AKfycbx5uWF5E2eEnxjra7a4enC9MaYWEM6m-0p9tmjsJMZJt_cGSKqqbDxSapUQ5hQwDKtwJQ/exec";
 
 interface Attendance {
   id: number;
@@ -104,6 +104,28 @@ interface MateriData {
   link: string;
 }
 
+interface TugasData {
+  date: string;
+  time: string;
+  class: string;
+  name: string;
+  nisn: string;
+  photo: string;
+  modul: string;
+  mapel: string;
+}
+
+interface TugasFormState {
+  date: string;
+  time: string;
+  mapel: string;
+  modul: string;
+  photo: string | null;
+  photoBase64: string | null;
+  error: string;
+  loading: boolean;
+}
+
 interface ProcessedAttendance extends Attendance {
   processedPhoto?: string | null;
 }
@@ -122,6 +144,7 @@ const App: React.FC = () => {
     | "monthlyRecap"
     | "mapelData"
     | "materi"
+    | "tugasData"
   >("form");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [attendances, setAttendances] = useState<Attendance[]>([]);
@@ -200,6 +223,7 @@ const App: React.FC = () => {
 
   const [isPolling, setIsPolling] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [isLoadingInitialData, setIsLoadingInitialData] = useState(true);
   const [showClearAttendanceModal, setShowClearAttendanceModal] =
     useState(false);
 
@@ -248,6 +272,21 @@ const App: React.FC = () => {
   const [filterKelasMateri, setFilterKelasMateri] = useState("");
   const [filterMapelMateri, setFilterMapelMateri] = useState("");
   const [filterPaketMateri, setFilterPaketMateri] = useState("");
+  const [tugasForm, setTugasForm] = useState<TugasFormState>({
+    date: "",
+    time: "",
+    mapel: "",
+    modul: "",
+    photo: null,
+    photoBase64: null,
+    error: "",
+    loading: false,
+  });
+  const tugasFileInputRef = useRef<HTMLInputElement>(null);
+  const [tugasDataList, setTugasDataList] = useState<TugasData[]>([]);
+  const [loadingTugasData, setLoadingTugasData] = useState(false);
+  const [filterKelasTugas, setFilterKelasTugas] = useState("");
+  const [filterMapelTugas, setFilterMapelTugas] = useState("");
   const [editMapel, setEditMapel] = useState<Mapel | null>(null); // Untuk mode edit
   const [deleteMapelId, setDeleteMapelId] = useState<string | null>(null); // Untuk konfirmasi hapus
   const [showAddMapelModal, setShowAddMapelModal] = useState(false);
@@ -343,6 +382,27 @@ const App: React.FC = () => {
     }
   };
 
+  const fetchTugasData = async () => {
+    setLoadingTugasData(true);
+    try {
+      const response = await fetch(
+        `${ENDPOINT}?action=getTugasData&_t=${Date.now()}`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setTugasDataList(data.data);
+        } else {
+          console.error("Gagal ambil data tugas:", data.message);
+        }
+      }
+    } catch (error) {
+      console.error("Error fetching tugas data:", error);
+    } finally {
+      setLoadingTugasData(false);
+    }
+  };
+
   useEffect(() => {
     const now = new Date();
     const makassarTime = new Intl.DateTimeFormat("id-ID", {
@@ -396,6 +456,7 @@ const App: React.FC = () => {
 
     // Fungsi untuk mengambil data
     const fetchData = async () => {
+      setIsLoadingInitialData(true);
       try {
         const [studentResponse, teacherResponse, kepsekResponse] =
           await Promise.all([
@@ -420,6 +481,8 @@ const App: React.FC = () => {
         }
       } catch (error) {
         console.error("Error fetching data:", error);
+      } finally {
+        setIsLoadingInitialData(false);
       }
     };
 
@@ -497,19 +560,72 @@ const App: React.FC = () => {
     }
   }, [isLoggedIn, userRole, currentPage]);
 
-  // Auto-polling untuk halaman data absensi
+  // Prefill tanggal/jam saat siswa buka halaman Tugas, dan fetch data saat guru buka halaman Data Tugas
+  useEffect(() => {
+    if (isLoggedIn && userRole === "Siswa" && currentPage === "tugas") {
+      const now = new Date();
+      const makassarTime = new Intl.DateTimeFormat("id-ID", {
+        timeZone: "Asia/Makassar",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).formatToParts(now);
+      const getPart = (part: string) =>
+        makassarTime.find((p) => p.type === part)?.value;
+      const date = `${getPart("year")}-${getPart("month")}-${getPart("day")}`;
+      const time = `${getPart("hour")}:${getPart("minute")}:${getPart(
+        "second"
+      )}`.slice(0, 8);
+      setTugasForm((prev) => ({ ...prev, date, time }));
+    }
+    if (currentPage === "tugasData" && userRole === "Guru") {
+      fetchTugasData();
+    }
+  }, [isLoggedIn, userRole, currentPage]);
+
+  // Auto-polling untuk halaman data absensi — aktif jika:
+  // (Bulan + Mapel + Kelas semuanya terisi) ATAU (Tanggal saja terisi)
   useEffect(() => {
     let pollingInterval: ReturnType<typeof setInterval> | null = null;
 
-    if (currentPage === "data" && userRole === "Guru" && isLoggedIn) {
+    const hasFullFilter = !!(selectedMonth && selectedMapel && selectedClass);
+    const hasDateOnly = !!selectedDate;
+    const filtersReady = hasFullFilter || hasDateOnly;
+
+    if (
+      currentPage === "data" &&
+      userRole === "Guru" &&
+      isLoggedIn &&
+      filtersReady
+    ) {
       setIsPolling(true);
-      fetchAttendanceData(false); // false = tidak show loading
+
+      // Kirim hanya filter yang benar-benar terisi
+      const activeFilters: {
+        month?: string;
+        mapel?: string;
+        class?: string;
+        date?: string;
+      } = {};
+      if (selectedMonth) activeFilters.month = selectedMonth;
+      if (selectedMapel) activeFilters.mapel = selectedMapel;
+      if (selectedClass) activeFilters.class = selectedClass;
+      if (selectedDate) activeFilters.date = selectedDate;
+
+      fetchAttendanceData(false, activeFilters);
 
       pollingInterval = setInterval(() => {
-        fetchAttendanceData(false); // polling tanpa loading indicator
-      }, 5000); // setiap 5 detik
+        fetchAttendanceData(false, activeFilters);
+      }, 5000);
     } else {
       setIsPolling(false);
+      if (currentPage === "data" && !filtersReady) {
+        setAttendanceData([]); // kosongkan sampai salah satu syarat filter terpenuhi
+      }
     }
 
     return () => {
@@ -518,7 +634,15 @@ const App: React.FC = () => {
         setIsPolling(false);
       }
     };
-  }, [currentPage, userRole, isLoggedIn]);
+  }, [
+    currentPage,
+    userRole,
+    isLoggedIn,
+    selectedMonth,
+    selectedMapel,
+    selectedClass,
+    selectedDate,
+  ]);
 
   useEffect(() => {
     if (currentPage === "monthlyRecap" && userRole === "Guru") {
@@ -540,15 +664,25 @@ const App: React.FC = () => {
     filterKelas,
   ]); // 👈 TAMBAHKAN dependensi selectedMapelGuru dan filterKelas
 
-  const fetchAttendanceData = async (showLoading = true) => {
+  const fetchAttendanceData = async (
+    showLoading = true,
+    filters?: { month?: string; mapel?: string; class?: string; date?: string }
+  ) => {
     if (showLoading) {
       setLoading(true);
     }
 
     try {
-      const response = await fetch(
-        `${ENDPOINT}?action=getAttendanceData&_t=${Date.now()}`
-      );
+      const params = new URLSearchParams({
+        action: "getAttendanceData",
+        _t: Date.now().toString(),
+      });
+      if (filters?.month) params.set("month", filters.month);
+      if (filters?.mapel) params.set("mapel", filters.mapel);
+      if (filters?.class) params.set("class", filters.class);
+      if (filters?.date) params.set("date", filters.date);
+
+      const response = await fetch(`${ENDPOINT}?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -1214,6 +1348,129 @@ const App: React.FC = () => {
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+  };
+
+  const handleTugasFileSelect = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setTugasForm((prev) => ({ ...prev, error: "File harus berupa gambar" }));
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      setTugasForm((prev) => ({
+        ...prev,
+        error: "Ukuran file terlalu besar (maks 15MB sebelum kompresi)",
+      }));
+      return;
+    }
+
+    try {
+      setTugasForm((prev) => ({
+        ...prev,
+        loading: true,
+        error: "Mengompres file...",
+      }));
+      // target ~0.095MB (~97KB) agar hasil akhir selalu di bawah 100KB
+      const base64 = await compressImage(file, 0.095);
+      const compressedSizeKB = Math.round((base64.length * 3) / 4 / 1024);
+      console.log(`Ukuran file tugas setelah kompresi: ${compressedSizeKB} KB`);
+
+      const photoURL = URL.createObjectURL(file);
+      setTugasForm((prev) => ({
+        ...prev,
+        photo: photoURL,
+        photoBase64: base64,
+        error: "",
+        loading: false,
+      }));
+      event.target.value = "";
+    } catch (error) {
+      console.error("Error processing tugas file:", error);
+      setTugasForm((prev) => ({
+        ...prev,
+        error: "Gagal memproses file. Coba gunakan gambar yang lebih kecil.",
+        loading: false,
+      }));
+    }
+  };
+
+  const openTugasCamera = () => {
+    tugasFileInputRef.current?.click();
+  };
+
+  const retakeTugasFile = () => {
+    if (tugasForm.photo) URL.revokeObjectURL(tugasForm.photo);
+    setTugasForm((prev) => ({
+      ...prev,
+      photo: null,
+      photoBase64: null,
+      error: "",
+    }));
+    if (tugasFileInputRef.current) tugasFileInputRef.current.value = "";
+  };
+
+  const handleSubmitTugas = async () => {
+    if (!tugasForm.mapel || !tugasForm.modul.trim()) {
+      setTugasForm((prev) => ({
+        ...prev,
+        error: "Harap pilih mata pelajaran dan isi modul/judul tugas",
+      }));
+      return;
+    }
+    if (!tugasForm.photoBase64) {
+      setTugasForm((prev) => ({
+        ...prev,
+        error: "Harap unggah file tugas terlebih dahulu",
+      }));
+      return;
+    }
+
+    setTugasForm((prev) => ({ ...prev, loading: true, error: "" }));
+
+    try {
+      const response = await fetch(ENDPOINT, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "addTugas",
+          date: tugasForm.date,
+          time: tugasForm.time,
+          class: form.class,
+          name: form.name,
+          nisn: form.nisn,
+          mapel: tugasForm.mapel,
+          modul: tugasForm.modul.trim(),
+          photo: tugasForm.photoBase64,
+        }),
+      });
+
+      if (response.type === "opaque") {
+        if (tugasForm.photo) URL.revokeObjectURL(tugasForm.photo);
+        setTugasForm((prev) => ({
+          ...prev,
+          modul: "",
+          photo: null,
+          photoBase64: null,
+          error: "",
+          loading: false,
+        }));
+        alert("Tugas berhasil dikirim!");
+      } else {
+        throw new Error("Unexpected response type");
+      }
+    } catch (error: any) {
+      console.error("Error submit tugas:", error);
+      setTugasForm((prev) => ({
+        ...prev,
+        error: `Gagal mengirim tugas: ${error.message}`,
+        loading: false,
+      }));
     }
   };
 
@@ -2279,13 +2536,14 @@ const App: React.FC = () => {
       | "teacherForm"
       | "teacherData"
       | "monthlyRecap"
-      | "mapelData" // 👈 TAMBAHKAN INI!
-      | "materi" // 👈 TAMBAHKAN INI
+      | "mapelData"
+      | "materi"
+      | "tugas"
+      | "tugasData"
   ) => {
     setCurrentPage(page);
-    if (page === "data") {
-      fetchAttendanceData(true); // show loading saat pertama kali
-    }
+    // Fetch untuk halaman "data" kini ditangani oleh efek polling
+    // begitu Bulan, Mapel, dan Kelas sudah dipilih (lihat useEffect terkait).
   };
 
   const toggleMenu = () => {
@@ -2301,8 +2559,10 @@ const App: React.FC = () => {
       | "teacherForm"
       | "teacherData"
       | "monthlyRecap"
-      | "mapelData" // ✅ TAMBAHKAN INI
-      | "materi" // 👈 TAMBAHKAN INI
+      | "mapelData"
+      | "materi"
+      | "tugas"
+      | "tugasData"
   ) => {
     handlePageChange(page);
     setIsMenuOpen(false);
@@ -3492,10 +3752,11 @@ const App: React.FC = () => {
       return url;
     };
 
-    // ✅ TAMBAHKAN INI: Ambil kelas unik dari attendanceData untuk dropdown
+    // ✅ Ambil kelas unik dari studentData, bukan attendanceData
+    // (attendanceData sengaja kosong sampai filter lengkap dipilih)
     const uniqueClasses = [
-      "", // Opsi "Semua" (kosong)
-      ...new Set(attendanceData.map((att) => att.class).filter(Boolean)),
+      "",
+      ...new Set(studentData.map((s) => s.class).filter(Boolean)),
     ];
 
     // Fungsi untuk download PDF
@@ -4180,6 +4441,14 @@ const App: React.FC = () => {
           <div className="text-center py-8">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             <p className="mt-2 text-gray-600">Memuat data...</p>
+          </div>
+        ) : !(
+            (selectedMonth && selectedMapel && selectedClass) ||
+            selectedDate
+          ) ? (
+          <div className="p-6 text-center text-gray-500 italic bg-gray-50 border border-gray-200 rounded-lg">
+            Silahkan pilih Bulan, Mata Pelajaran, dan Kelas — atau isi Tanggal
+            saja — untuk menampilkan data absensi
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -5886,6 +6155,261 @@ const App: React.FC = () => {
     );
   };
 
+  const renderTugasPage = () => (
+    <div className="bg-white shadow-lg rounded-lg p-6">
+      <h2 className="text-xl font-semibold text-gray-900 mb-4">Upload Tugas</h2>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <input
+            type="text"
+            value={tugasForm.date}
+            readOnly
+            className="w-full p-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-700"
+          />
+          <input
+            type="text"
+            value={tugasForm.time}
+            readOnly
+            className="w-full p-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-700"
+          />
+        </div>
+
+        <input
+          type="text"
+          value={form.class}
+          readOnly
+          placeholder="Kelas"
+          className="w-full p-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-700"
+        />
+        <input
+          type="text"
+          value={form.name}
+          readOnly
+          placeholder="Nama"
+          className="w-full p-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-700"
+        />
+        <input
+          type="text"
+          value={form.nisn}
+          readOnly
+          placeholder="NISN"
+          className="w-full p-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-700"
+        />
+
+        <select
+          value={tugasForm.mapel}
+          onChange={(e) =>
+            setTugasForm((prev) => ({
+              ...prev,
+              mapel: e.target.value,
+              error: "",
+            }))
+          }
+          className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          disabled={mapelData.length === 0}
+        >
+          <option value="">Pilih Mata Pelajaran</option>
+          {mapelData.map((mapel, index) => (
+            <option key={index} value={mapel.mapel}>
+              {mapel.mapel}
+            </option>
+          ))}
+        </select>
+
+        <input
+          type="text"
+          value={tugasForm.modul}
+          onChange={(e) =>
+            setTugasForm((prev) => ({
+              ...prev,
+              modul: e.target.value,
+              error: "",
+            }))
+          }
+          placeholder="Modul / Judul Tugas"
+          className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+
+        <input
+          ref={tugasFileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleTugasFileSelect}
+          style={{ display: "none" }}
+        />
+
+        {!tugasForm.photo && (
+          <button
+            type="button"
+            onClick={openTugasCamera}
+            disabled={tugasForm.loading}
+            className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition duration-200 disabled:opacity-50"
+          >
+            {tugasForm.loading ? "⏳ Memproses..." : "📎 Pilih File Tugas"}
+          </button>
+        )}
+
+        {tugasForm.photo && (
+          <div className="space-y-2">
+            <img
+              src={tugasForm.photo}
+              alt="Preview tugas"
+              className="w-full h-64 object-cover rounded-lg border-2 border-green-300"
+            />
+            <button
+              type="button"
+              onClick={retakeTugasFile}
+              className="w-full bg-yellow-600 text-white p-2 rounded-lg hover:bg-yellow-700 transition duration-200"
+            >
+              🔄 Ganti File
+            </button>
+          </div>
+        )}
+
+        {tugasForm.error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg whitespace-pre-line">
+            {tugasForm.error}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={handleSubmitTugas}
+          disabled={!tugasForm.photoBase64 || tugasForm.loading}
+          className={`w-full p-3 rounded-lg transition duration-200 ${
+            !tugasForm.photoBase64 || tugasForm.loading
+              ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+              : "bg-blue-600 text-white hover:bg-blue-700"
+          }`}
+        >
+          {tugasForm.loading ? "⏳ Mengirim..." : "✅ Kirim Tugas"}
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderTugasDataPage = () => {
+    const uniqueKelasTugas = [
+      ...new Set(tugasDataList.map((t) => t.class).filter(Boolean)),
+    ];
+    const uniqueMapelTugas = [
+      ...new Set(tugasDataList.map((t) => t.mapel).filter(Boolean)),
+    ];
+
+    const filtered = tugasDataList.filter((t) => {
+      const matchKelas = filterKelasTugas ? t.class === filterKelasTugas : true;
+      const matchMapel = filterMapelTugas ? t.mapel === filterMapelTugas : true;
+      return matchKelas && matchMapel;
+    });
+
+    return (
+      <div className="bg-white shadow-lg rounded-lg p-6">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">
+          Data Tugas Siswa
+        </h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Filter Kelas
+            </label>
+            <select
+              value={filterKelasTugas}
+              onChange={(e) => setFilterKelasTugas(e.target.value)}
+              className="w-full p-2 border border-gray-300 rounded-lg"
+            >
+              <option value="">Semua Kelas</option>
+              {uniqueKelasTugas.map((k, i) => (
+                <option key={i} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Filter Mata Pelajaran
+            </label>
+            <select
+              value={filterMapelTugas}
+              onChange={(e) => setFilterMapelTugas(e.target.value)}
+              className="w-full p-2 border border-gray-300 rounded-lg"
+            >
+              <option value="">Semua Mata Pelajaran</option>
+              {uniqueMapelTugas.map((m, i) => (
+                <option key={i} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {loadingTugasData ? (
+          <div className="text-center py-8">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <p className="mt-2 text-gray-600">Memuat data tugas...</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left text-gray-700">
+              <thead className="text-xs uppercase bg-gray-200">
+                <tr>
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Jam</th>
+                  <th className="px-4 py-2">Kelas</th>
+                  <th className="px-4 py-2">Nama</th>
+                  <th className="px-4 py-2">NISN</th>
+                  <th className="px-4 py-2">Mapel</th>
+                  <th className="px-4 py-2">Modul</th>
+                  <th className="px-4 py-2">File</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={8}
+                      className="px-4 py-8 text-center text-gray-500"
+                    >
+                      Tidak ada data tugas
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((t, index) => (
+                    <tr key={index} className="border-b hover:bg-gray-50">
+                      <td className="px-4 py-2">{t.date}</td>
+                      <td className="px-4 py-2">{t.time}</td>
+                      <td className="px-4 py-2">{t.class}</td>
+                      <td className="px-4 py-2">{t.name}</td>
+                      <td className="px-4 py-2">{t.nisn}</td>
+                      <td className="px-4 py-2">{t.mapel}</td>
+                      <td className="px-4 py-2">{t.modul}</td>
+                      <td className="px-4 py-2">
+                        {t.photo ? (
+                          <a
+                            href={t.photo}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:text-blue-800 underline text-xs"
+                          >
+                            Buka File
+                          </a>
+                        ) : (
+                          <span className="text-gray-500">Tidak ada</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderTeacherDataPage = () => (
     <div className="bg-white shadow-lg rounded-lg p-6">
       <div className="mb-4 flex justify-between items-center">
@@ -6107,7 +6631,17 @@ const App: React.FC = () => {
                 ? "Aplikasi Absensi Siswa"
                 : "Aplikasi Pengelolaan Data Kehadiran Siswa"}
             </h1>
-            {renderLoginPage()}
+            {isLoadingInitialData ? (
+              <div className="bg-white shadow-lg rounded-lg p-10 w-full max-w-md mx-auto flex flex-col items-center justify-center">
+                <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+                <p className="text-gray-700 font-medium">Memuat data...</p>
+                <p className="text-gray-500 text-sm mt-1">
+                  Mohon tunggu sebentar
+                </p>
+              </div>
+            ) : (
+              renderLoginPage()
+            )}
           </>
         ) : (
           <>
@@ -6189,6 +6723,16 @@ const App: React.FC = () => {
                         >
                           📖 Materi Pelajaran
                         </button>
+                        <button
+                          onClick={() => handleMenuItemClick("tugasData")}
+                          className={`block w-full text-left px-4 py-2 rounded-md transition duration-200 ${
+                            currentPage === "tugasData"
+                              ? "bg-blue-600 text-white"
+                              : "text-gray-600 hover:bg-gray-100"
+                          }`}
+                        >
+                          📎 Data Tugas Siswa
+                        </button>
                       </div>
                     )}
                   </>
@@ -6217,6 +6761,18 @@ const App: React.FC = () => {
                         }`}
                       >
                         📖 Materi Pelajaran
+                      </button>
+                    )}
+                    {userRole === "Siswa" && (
+                      <button
+                        onClick={() => handlePageChange("tugas")}
+                        className={`px-6 py-2 rounded-md transition duration-200 ${
+                          currentPage === "tugas"
+                            ? "bg-blue-600 text-white"
+                            : "text-gray-600 hover:bg-gray-100"
+                        }`}
+                      >
+                        📎 Upload Tugas
                       </button>
                     )}
                     {userRole === "Kepala Sekolah" && (
@@ -6260,6 +6816,10 @@ const App: React.FC = () => {
               : currentPage === "materi" &&
                 (userRole === "Guru" || userRole === "Siswa") // 👈 TAMBAHKAN INI
               ? renderMateriPage()
+              : currentPage === "tugas" && userRole === "Siswa"
+              ? renderTugasPage()
+              : currentPage === "tugasData" && userRole === "Guru"
+              ? renderTugasDataPage()
               : null}
           </>
         )}

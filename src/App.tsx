@@ -144,6 +144,7 @@ const App: React.FC = () => {
     | "monthlyRecap"
     | "mapelData"
     | "materi"
+    | "tugas"
     | "tugasData"
   >("form");
   const [isMenuOpen, setIsMenuOpen] = useState(false);

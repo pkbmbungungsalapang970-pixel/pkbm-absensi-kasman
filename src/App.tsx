@@ -6,10 +6,15 @@ import * as XLSX from "xlsx";
 const ENDPOINT =
   "https://script.google.com/macros/s/AKfycbx5uWF5E2eEnxjra7a4enC9MaYWEM6m-0p9tmjsJMZJt_cGSKqqbDxSapUQ5hQwDKtwJQ/exec";
 
-// 👇 Menentukan halaman login mana yang tampil berdasarkan domain
-const IS_SISWA_DOMAIN =
-  typeof window !== "undefined" &&
-  window.location.hostname === "app-siswa-pkbm.netlify.app";
+// 👇 Menentukan halaman login mana yang tampil berdasarkan query param ?from=pkbm
+// (bukan berdasarkan domain, karena App.tsx yang sama di-deploy ke banyak
+// domain berbeda — satu per guru/mapel — dan harus bisa melayani dua peran:
+// Guru login langsung di domainnya sendiri, atau Siswa datang lewat selector)
+const getIsSiswaAccess = (): boolean => {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.get("from") === "pkbm";
+};
 
 interface Attendance {
   id: number;
@@ -328,8 +333,9 @@ const App: React.FC = () => {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const mapelParam = urlParams.get("mapel");
+    const isSiswaAccess = getIsSiswaAccess();
 
-    if (IS_SISWA_DOMAIN) {
+    if (isSiswaAccess) {
       setIsFromPKBM(true);
 
       // Auto-set role ke Siswa
@@ -344,7 +350,7 @@ const App: React.FC = () => {
         setMapelFromParam(mapelParam);
       }
     } else {
-      // Domain bawaan kode → khusus Guru
+      // Diakses langsung tanpa ?from=pkbm → khusus Guru
       setLoginForm((prev) => ({
         ...prev,
         role: "Guru",
@@ -473,12 +479,12 @@ const App: React.FC = () => {
       checkStudentAttendanceStatus(form.nisn, date, selectedMapel);
     }
 
-    // Fungsi untuk mengambil data awal — kondisional sesuai domain
+    // Fungsi untuk mengambil data awal — kondisional sesuai cara akses
     // agar halaman login lebih cepat (tidak fetch data yang tidak perlu)
     const fetchData = async () => {
       setIsLoadingInitialData(true);
       try {
-        if (IS_SISWA_DOMAIN) {
+        if (getIsSiswaAccess()) {
           // Domain Siswa → hanya perlu data siswa & mapel
           const [studentResponse, mapelResponse] = await Promise.all([
             fetch(`${ENDPOINT}?action=getStudentData`),
@@ -6599,7 +6605,7 @@ const App: React.FC = () => {
                   Mohon tunggu sebentar
                 </p>
               </div>
-            ) : IS_SISWA_DOMAIN ? (
+            ) : getIsSiswaAccess() ? (
               renderSiswaLoginPage()
             ) : (
               renderGuruLoginPage()

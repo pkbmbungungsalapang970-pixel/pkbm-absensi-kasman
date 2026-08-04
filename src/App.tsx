@@ -6,6 +6,11 @@ import * as XLSX from "xlsx";
 const ENDPOINT =
   "https://script.google.com/macros/s/AKfycbx5uWF5E2eEnxjra7a4enC9MaYWEM6m-0p9tmjsJMZJt_cGSKqqbDxSapUQ5hQwDKtwJQ/exec";
 
+// 👇 Menentukan halaman login mana yang tampil berdasarkan domain
+const IS_SISWA_DOMAIN =
+  typeof window !== "undefined" &&
+  window.location.hostname === "app-siswa-pkbm.netlify.app";
+
 interface Attendance {
   id: number;
   date: string;
@@ -75,7 +80,7 @@ interface StudentFormState {
 }
 
 interface LoginFormState {
-  role: "Guru" | "Siswa" | "Kepala Sekolah" | "";
+  role: "Guru" | "Siswa" | "";
   name: string;
   idNumber: string;
   error: string;
@@ -132,9 +137,7 @@ interface ProcessedAttendance extends Attendance {
 
 const App: React.FC = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [userRole, setUserRole] = useState<
-    "Guru" | "Siswa" | "Kepala Sekolah" | null
-  >(null);
+  const [userRole, setUserRole] = useState<"Guru" | "Siswa" | null>(null);
   const [currentPage, setCurrentPage] = useState<
     | "form"
     | "data"
@@ -324,10 +327,9 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    const fromPKBM = urlParams.get("from") === "pkbm";
     const mapelParam = urlParams.get("mapel");
 
-    if (fromPKBM) {
+    if (IS_SISWA_DOMAIN) {
       setIsFromPKBM(true);
 
       // Auto-set role ke Siswa
@@ -341,6 +343,12 @@ const App: React.FC = () => {
         setSelectedMapel(mapelParam);
         setMapelFromParam(mapelParam);
       }
+    } else {
+      // Domain bawaan kode → khusus Guru
+      setLoginForm((prev) => ({
+        ...prev,
+        role: "Guru",
+      }));
     }
   }, []);
 
@@ -361,6 +369,20 @@ const App: React.FC = () => {
       console.error("Error fetching mapel data:", error);
     } finally {
       setLoadingMapel(false);
+    }
+  };
+
+  // Fetch data siswa khusus untuk Guru setelah login
+  // (dipisah dari fetchData awal supaya halaman login Guru lebih cepat)
+  const fetchGuruStudentData = async () => {
+    try {
+      const response = await fetch(`${ENDPOINT}?action=getStudentData`);
+      if (response.ok) {
+        const data = await response.json();
+        setStudentData(data.success ? data.data : []);
+      }
+    } catch (error) {
+      console.error("Error fetching student data for guru:", error);
     }
   };
 
@@ -446,38 +468,44 @@ const App: React.FC = () => {
       }
     );
 
-    // Panggil fetchMapelData
-    fetchMapelData();
-
     // Cek status absensi siswa jika sudah login sebagai siswa
     if (isLoggedIn && userRole === "Siswa" && form.nisn && selectedMapel) {
       checkStudentAttendanceStatus(form.nisn, date, selectedMapel);
     }
 
-    // Fungsi untuk mengambil data
+    // Fungsi untuk mengambil data awal — kondisional sesuai domain
+    // agar halaman login lebih cepat (tidak fetch data yang tidak perlu)
     const fetchData = async () => {
       setIsLoadingInitialData(true);
       try {
-        const [studentResponse, teacherResponse, kepsekResponse] =
-          await Promise.all([
+        if (IS_SISWA_DOMAIN) {
+          // Domain Siswa → hanya perlu data siswa & mapel
+          const [studentResponse, mapelResponse] = await Promise.all([
             fetch(`${ENDPOINT}?action=getStudentData`),
-            fetch(`${ENDPOINT}?action=getTeacherData`),
-            fetch(`${ENDPOINT}?action=getKepsekData`),
+            fetch(`${ENDPOINT}?action=getMapelData`),
           ]);
 
-        if (studentResponse.ok) {
-          const studentData = await studentResponse.json();
-          setStudentData(studentData.success ? studentData.data : []);
-        }
+          if (studentResponse.ok) {
+            const studentData = await studentResponse.json();
+            setStudentData(studentData.success ? studentData.data : []);
+          }
 
-        if (teacherResponse.ok) {
-          const teacherData = await teacherResponse.json();
-          setTeacherData(teacherData.success ? teacherData.data : []);
-        }
+          if (mapelResponse.ok) {
+            const mapelData = await mapelResponse.json();
+            setMapelData(mapelData.success ? mapelData.data : []);
+          }
+        } else {
+          // Domain Guru → hanya perlu data guru
+          const teacherResponse = await fetch(
+            `${ENDPOINT}?action=getTeacherData`
+          );
 
-        if (kepsekResponse.ok) {
-          const kepsekData = await kepsekResponse.json();
-          setKepsekData(kepsekData.success ? kepsekData.data : []);
+          if (teacherResponse.ok) {
+            const teacherData = await teacherResponse.json();
+            setTeacherData(teacherData.success ? teacherData.data : []);
+          } else {
+            console.log("teacherResponse tidak ok:", teacherResponse.status);
+          }
         }
       } catch (error) {
         console.error("Error fetching data:", error);
@@ -520,26 +548,6 @@ const App: React.FC = () => {
         }
       );
     }, 1000);
-
-    const referrer = document.referrer;
-    if (
-      referrer.includes("app-siswa-pkbm.netlify.app") ||
-      window.location.search.includes("from=pkbm")
-    ) {
-      setIsFromPKBM(true);
-      setLoginForm((prev) => ({
-        ...prev,
-        role: "Siswa",
-      }));
-
-      // Cek URL parameter untuk mapel
-      const urlParams = new URLSearchParams(window.location.search);
-      const mapelParam = urlParams.get("mapel");
-      if (mapelParam) {
-        setSelectedMapel(mapelParam);
-        setMapelFromParam(mapelParam);
-      }
-    }
 
     return () => {
       clearInterval(interval);
@@ -982,12 +990,6 @@ const App: React.FC = () => {
         (item) =>
           item.name === loginForm.name && item.nisn === loginForm.idNumber
       );
-    } else if (loginForm.role === "Kepala Sekolah") {
-      // Tambahkan ini
-      isValid = kepsekData.some(
-        (item) =>
-          item.name === loginForm.name && item.nomorinduk === loginForm.idNumber
-      );
     }
 
     if (isValid) {
@@ -1022,9 +1024,7 @@ const App: React.FC = () => {
       } else if (loginForm.role === "Guru") {
         setCurrentPage("teacherForm");
         fetchMapelData();
-      } else if (loginForm.role === "Kepala Sekolah") {
-        // Tambahkan ini
-        setCurrentPage("teacherData");
+        fetchGuruStudentData(); // 👈 fetch data siswa setelah guru login
       }
 
       setLoginForm({
@@ -2705,95 +2705,22 @@ const App: React.FC = () => {
     return record ? record.status : null;
   };
 
-  const renderLoginPage = () => (
+  const renderGuruLoginPage = () => (
     <div className="bg-white shadow-lg rounded-lg p-6 w-full max-w-md mx-auto">
-      <h2 className="text-xl font-semibold text-gray-900 mb-4">Login</h2>
+      <h2 className="text-xl font-semibold text-gray-900 mb-4">Login Guru</h2>
       <div className="space-y-4">
-        <select
-          name="role"
-          value={loginForm.role}
-          onChange={handleLoginInputChange}
-          disabled={isFromPKBM} // ✅ TAMBAH INI: Disable jika dari PKBM (role auto Siswa, tidak bisa ganti)
-          className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50" // ✅ Tambah disabled:opacity-50 untuk visual
-        >
-          <option value="">Pilih Peran</option>
-          <option value="Guru">Guru</option>
-          <option value="Siswa">Siswa</option>
-          <option value="Kepala Sekolah">Kepala Sekolah</option>
-        </select>
-
-        {loginForm.role === "Siswa" && (
-          <div className="mt-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1"></label>
-            <input
-              type="text"
-              value={selectedMapel}
-              onChange={(e) => setSelectedMapel(e.target.value)}
-              placeholder="Ketik nama mata pelajaran (misal: Matematika)"
-              className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50" // ✅ Tambah disabled:opacity-50 untuk visual
-              disabled={isFromPKBM || !loginForm.role} // ✅ TAMBAH INI: Disable jika dari PKBM (atau role belum pilih)
-            />
-          </div>
-        )}
-
-        {/* ✅ POSISI BARU: Dropdown Kelas di bawah Mata Pelajaran (hanya jika role Siswa) */}
-        {loginForm.role === "Siswa" && (
-          <select
-            value={selectedClassForLogin}
-            onChange={(e) => {
-              setSelectedClassForLogin(e.target.value);
-              // Reset nama saat kelas berubah
-              setLoginForm((prev) => ({ ...prev, name: "", error: "" }));
-            }}
-            className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={!loginForm.role}
-          >
-            <option value="">Pilih Kelas</option>
-            {[...new Set(studentData.map((s) => s.class))].map((kelas) => (
-              <option key={kelas} value={kelas}>
-                {kelas}
-              </option>
-            ))}
-          </select>
-        )}
-
-        {/* ✅ MODIFIKASI: Dropdown Nama - Hanya tampilkan siswa sesuai kelas yang dipilih */}
         <select
           name="name"
           value={loginForm.name}
           onChange={handleLoginInputChange}
-          disabled={
-            !loginForm.role ||
-            (loginForm.role === "Siswa" && !selectedClassForLogin)
-          }
-          className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+          className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="">Pilih Nama</option>
-          {loginForm.role === "Guru"
-            ? teacherData.map((item) => (
-                <option key={item.nip} value={item.name}>
-                  {item.name}
-                </option>
-              ))
-            : loginForm.role === "Siswa"
-            ? studentData
-                .filter(
-                  (student) =>
-                    selectedClassForLogin === "" ||
-                    student.class === selectedClassForLogin
-                )
-                .map((item) => (
-                  <option key={item.nisn} value={item.name}>
-                    {item.name}
-                  </option>
-                ))
-            : loginForm.role === "Kepala Sekolah"
-            ? kepsekData.map((item) => (
-                <option key={item.nomorinduk} value={item.name}>
-                  {item.name}
-                </option>
-              ))
-            : null}
+          {teacherData.map((item) => (
+            <option key={item.nip} value={item.name}>
+              {item.name}
+            </option>
+          ))}
         </select>
 
         <input
@@ -2801,49 +2728,99 @@ const App: React.FC = () => {
           name="idNumber"
           value={loginForm.idNumber}
           onChange={handleLoginInputChange}
-          placeholder={
-            loginForm.role === "Guru"
-              ? "NIP"
-              : loginForm.role === "Siswa"
-              ? "NISN"
-              : loginForm.role === "Kepala Sekolah"
-              ? "Nomor Induk"
-              : "Nomor Induk"
-          }
-          disabled={
-            !loginForm.role ||
-            (loginForm.role === "Siswa" && !selectedClassForLogin)
-          }
-          className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+          placeholder="NIP"
+          className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
+
         {loginForm.error && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg">
             {loginForm.error}
           </div>
         )}
+
         <button
           onClick={handleLogin}
-          disabled={
-            loginForm.loading ||
-            !loginForm.role ||
-            (loginForm.role === "Siswa" && !selectedClassForLogin)
-          }
+          disabled={loginForm.loading}
           className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition duration-200 disabled:opacity-50"
         >
           {loginForm.loading ? "⏳ Memproses..." : "Login"}
         </button>
+      </div>
+    </div>
+  );
 
-        {/* ✅ TAMBAHKAN KONDISI: Tombol Kembali hanya muncul jika dari link PKBM */}
-        {isFromPKBM && (
-          <div className="mt-4">
-            <button
-              onClick={() => window.history.back()}
-              className="block w-full text-center bg-gray-600 hover:bg-gray-700 text-white p-3 rounded-lg transition duration-200"
-            >
-              ← Kembali
-            </button>
+  const renderSiswaLoginPage = () => (
+    <div className="bg-white shadow-lg rounded-lg p-6 w-full max-w-md mx-auto">
+      <h2 className="text-xl font-semibold text-gray-900 mb-4">Login Siswa</h2>
+      <div className="space-y-4">
+        <input
+          type="text"
+          value={selectedMapel}
+          onChange={(e) => setSelectedMapel(e.target.value)}
+          placeholder="Ketik nama mata pelajaran (misal: Matematika)"
+          className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+
+        <select
+          value={selectedClassForLogin}
+          onChange={(e) => {
+            setSelectedClassForLogin(e.target.value);
+            setLoginForm((prev) => ({ ...prev, name: "", error: "" }));
+          }}
+          className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">Pilih Kelas</option>
+          {[...new Set(studentData.map((s) => s.class))].map((kelas) => (
+            <option key={kelas} value={kelas}>
+              {kelas}
+            </option>
+          ))}
+        </select>
+
+        <select
+          name="name"
+          value={loginForm.name}
+          onChange={handleLoginInputChange}
+          disabled={!selectedClassForLogin}
+          className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+        >
+          <option value="">Pilih Nama</option>
+          {studentData
+            .filter(
+              (student) =>
+                selectedClassForLogin === "" ||
+                student.class === selectedClassForLogin
+            )
+            .map((item) => (
+              <option key={item.nisn} value={item.name}>
+                {item.name}
+              </option>
+            ))}
+        </select>
+
+        <input
+          type="text"
+          name="idNumber"
+          value={loginForm.idNumber}
+          onChange={handleLoginInputChange}
+          placeholder="NISN"
+          disabled={!selectedClassForLogin}
+          className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+        />
+
+        {loginForm.error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg">
+            {loginForm.error}
           </div>
         )}
+
+        <button
+          onClick={handleLogin}
+          disabled={loginForm.loading || !selectedClassForLogin}
+          className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition duration-200 disabled:opacity-50"
+        >
+          {loginForm.loading ? "⏳ Memproses..." : "Login"}
+        </button>
       </div>
     </div>
   );
@@ -6622,8 +6599,10 @@ const App: React.FC = () => {
                   Mohon tunggu sebentar
                 </p>
               </div>
+            ) : IS_SISWA_DOMAIN ? (
+              renderSiswaLoginPage()
             ) : (
-              renderLoginPage()
+              renderGuruLoginPage()
             )}
           </>
         ) : (
@@ -6758,18 +6737,6 @@ const App: React.FC = () => {
                         📎 Upload Tugas
                       </button>
                     )}
-                    {userRole === "Kepala Sekolah" && (
-                      <button
-                        onClick={() => handlePageChange("teacherData")}
-                        className={`px-6 py-2 rounded-md transition duration-200 ${
-                          currentPage === "teacherData"
-                            ? "bg-blue-600 text-white"
-                            : "text-gray-600 hover:bg-gray-100"
-                        }`}
-                      >
-                        👨‍🏫 Data Guru
-                      </button>
-                    )}
                   </>
                 )}
                 {/* Tombol Logout selalu ada */}
@@ -6790,8 +6757,6 @@ const App: React.FC = () => {
               ? renderDataPage()
               : currentPage === "students" && userRole === "Guru"
               ? renderStudentsPage()
-              : currentPage === "teacherData" && userRole === "Kepala Sekolah" // Tambahkan ini
-              ? renderTeacherDataPage()
               : currentPage === "monthlyRecap" && userRole === "Guru"
               ? renderMonthlyRecapPage()
               : currentPage === "mapelData" && userRole === "Guru" // ✅ TAMBAHKAN INI

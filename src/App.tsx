@@ -6,6 +6,17 @@ import * as XLSX from "xlsx";
 const ENDPOINT =
   "https://script.google.com/macros/s/AKfycbzjbg37Rn14zuEdETBL3DAsJX_wjn0EEzV5Ldcqs1ZWXgyZwczmru69zmfYRPFs1BIZqA/exec";
 
+const INITIAL_DATA_CACHE_KEY = "pkbm_initial_login_data";
+
+const getCachedInitialData = () => {
+  try {
+    const cached = localStorage.getItem(INITIAL_DATA_CACHE_KEY);
+    return cached ? JSON.parse(cached) : null;
+  } catch {
+    return null;
+  }
+};
+
 interface Attendance {
   id: number;
   date: string;
@@ -150,8 +161,12 @@ const App: React.FC = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [attendances, setAttendances] = useState<Attendance[]>([]);
   const [attendanceData, setAttendanceData] = useState<Attendance[]>([]);
-  const [studentData, setStudentData] = useState<StudentData[]>([]);
-  const [teacherData, setTeacherData] = useState<TeacherData[]>([]);
+  const [studentData, setStudentData] = useState<StudentData[]>(
+    () => getCachedInitialData()?.students || []
+  );
+  const [teacherData, setTeacherData] = useState<TeacherData[]>(
+    () => getCachedInitialData()?.teachers || []
+  );
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState<FormState>({
     date: "",
@@ -224,7 +239,9 @@ const App: React.FC = () => {
 
   const [isPolling, setIsPolling] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const [isLoadingInitialData, setIsLoadingInitialData] = useState(true);
+  const [isLoadingInitialData, setIsLoadingInitialData] = useState(
+    () => getCachedInitialData() === null
+  );
   const [showClearAttendanceModal, setShowClearAttendanceModal] =
     useState(false);
 
@@ -234,7 +251,9 @@ const App: React.FC = () => {
     attendedMapel?: string; // 👈 Tambahkan ini (opsional dengan ? agar bisa undefined jika tidak ada)
   }>({ hasAttended: false, attendanceDate: "", attendedMapel: "" });
 
-  const [kepsekData, setKepsekData] = useState<KepsekData[]>([]);
+  const [kepsekData, setKepsekData] = useState<KepsekData[]>(
+    () => getCachedInitialData()?.kepsek || []
+  );
   const [teacherFormState, setTeacherFormState] =
     useState<TeacherManagementFormState>({
       nip: "",
@@ -265,7 +284,9 @@ const App: React.FC = () => {
   const [selectedNameRecap, setSelectedNameRecap] = useState<string>("Semua");
   const [loadingRecap, setLoadingRecap] = useState(false);
   // ✅ TAMBAHKAN INI: State untuk manajemen data mapel
-  const [mapelData, setMapelData] = useState<Mapel[]>([]);
+  const [mapelData, setMapelData] = useState<Mapel[]>(
+    () => getCachedInitialData()?.mapel || []
+  );
   const [selectedMapel, setSelectedMapel] = useState("");
   const [loadingMapel, setLoadingMapel] = useState(false);
   const [materiData, setMateriData] = useState<MateriData[]>([]);
@@ -407,17 +428,30 @@ const App: React.FC = () => {
   // ✅ BARU: Ambil semua data awal (siswa, guru, kepsek, mapel) dalam SATU request,
   // hanya sekali saat komponen pertama kali mount (dependency array kosong).
   useEffect(() => {
+    const hasCache = getCachedInitialData() !== null;
+
     const fetchInitialData = async () => {
-      setIsLoadingInitialData(true);
+      // Jangan set loading=true kalau sudah ada cache, biar tidak ada spinner
+      if (!hasCache) setIsLoadingInitialData(true);
       try {
         const response = await fetch(`${ENDPOINT}?action=getInitialLoginData`);
         if (response.ok) {
           const result = await response.json();
           if (result.success) {
-            setStudentData(result.students || []);
-            setTeacherData(result.teachers || []);
-            setKepsekData(result.kepsek || []);
-            setMapelData(result.mapel || []);
+            const freshData = {
+              students: result.students || [],
+              teachers: result.teachers || [],
+              kepsek: result.kepsek || [],
+              mapel: result.mapel || [],
+            };
+            setStudentData(freshData.students);
+            setTeacherData(freshData.teachers);
+            setKepsekData(freshData.kepsek);
+            setMapelData(freshData.mapel);
+            localStorage.setItem(
+              INITIAL_DATA_CACHE_KEY,
+              JSON.stringify(freshData)
+            );
           }
         }
       } catch (error) {

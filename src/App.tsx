@@ -342,6 +342,7 @@ const App: React.FC = () => {
   } | null>(null);
   const [locationError, setLocationError] = useState<string>("");
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
+  const [pendingPhotoFile, setPendingPhotoFile] = useState<File | null>(null);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -582,6 +583,16 @@ const App: React.FC = () => {
       fetchStudentLocation();
     }
   }, [isLoggedIn, userRole, currentPage]);
+
+  // ✅ BARU: Jika ada foto yang tertunda (diambil sebelum GPS siap),
+  // proses otomatis begitu lokasi berhasil terdeteksi — siswa tidak perlu foto ulang.
+  useEffect(() => {
+    if (studentLocation && pendingPhotoFile) {
+      const file = pendingPhotoFile;
+      setPendingPhotoFile(null);
+      processStudentPhoto(file);
+    }
+  }, [studentLocation, pendingPhotoFile]);
 
   // Prefill tanggal/jam saat siswa buka halaman Tugas, dan fetch data saat guru buka halaman Data Tugas
   useEffect(() => {
@@ -1252,6 +1263,49 @@ const App: React.FC = () => {
     });
   };
 
+  const processStudentPhoto = async (file: File) => {
+    if (!studentLocation) return; // Jaga-jaga, seharusnya tidak terpanggil tanpa lokasi
+
+    try {
+      setForm(
+        (prev: FormState): FormState => ({
+          ...prev,
+          loading: true,
+          error: "Memproses gambar...",
+        })
+      );
+
+      const base64 = await compressImageWithLocationStamp(
+        file,
+        studentLocation,
+        0.8
+      );
+      const compressedSizeKB = Math.round((base64.length * 3) / 4 / 1024);
+      console.log(`Ukuran gambar setelah kompresi: ${compressedSizeKB} KB`);
+
+      const photoURL = URL.createObjectURL(file);
+
+      setForm(
+        (prev: FormState): FormState => ({
+          ...prev,
+          photo: photoURL,
+          photoBase64: base64,
+          error: "",
+          loading: false,
+        })
+      );
+    } catch (error) {
+      console.error("Error processing file:", error);
+      setForm(
+        (prev: FormState): FormState => ({
+          ...prev,
+          error: "Gagal memproses file. Coba gunakan gambar yang lebih kecil.",
+          loading: false,
+        })
+      );
+    }
+  };
+
   const handleFileSelect = async (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -1277,58 +1331,22 @@ const App: React.FC = () => {
       }
 
       if (!studentLocation) {
-        setForm(
-          (prev: FormState): FormState => ({
-            ...prev,
-            error:
-              "Lokasi GPS belum terdeteksi. Aktifkan izin lokasi lalu coba lagi.",
-          })
-        );
-        fetchStudentLocation();
-        return;
-      }
-
-      try {
+        // ✅ Jangan batalkan foto: simpan dulu, proses otomatis begitu GPS siap
+        setPendingPhotoFile(file);
         setForm(
           (prev: FormState): FormState => ({
             ...prev,
             loading: true,
-            error: "Memproses gambar...",
+            error: "Menunggu lokasi GPS terdeteksi, mohon tunggu sebentar...",
           })
         );
-
-        const base64 = await compressImageWithLocationStamp(
-          file,
-          studentLocation,
-          0.8
-        );
-        const compressedSizeKB = Math.round((base64.length * 3) / 4 / 1024);
-        console.log(`Ukuran gambar setelah kompresi: ${compressedSizeKB} KB`);
-
-        const photoURL = URL.createObjectURL(file);
-
-        setForm(
-          (prev: FormState): FormState => ({
-            ...prev,
-            photo: photoURL,
-            photoBase64: base64,
-            error: "",
-            loading: false,
-          })
-        );
-
+        fetchStudentLocation();
         event.target.value = "";
-      } catch (error) {
-        console.error("Error processing file:", error);
-        setForm(
-          (prev: FormState): FormState => ({
-            ...prev,
-            error:
-              "Gagal memproses file. Coba gunakan gambar yang lebih kecil.",
-            loading: false,
-          })
-        );
+        return;
       }
+
+      await processStudentPhoto(file);
+      event.target.value = "";
     }
   };
 

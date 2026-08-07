@@ -343,6 +343,7 @@ const App: React.FC = () => {
   const [locationError, setLocationError] = useState<string>("");
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
   const [pendingPhotoFile, setPendingPhotoFile] = useState<File | null>(null);
+  const [isPhotoPreviewLoading, setIsPhotoPreviewLoading] = useState(false);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -1284,6 +1285,7 @@ const App: React.FC = () => {
       console.log(`Ukuran gambar setelah kompresi: ${compressedSizeKB} KB`);
 
       const photoURL = URL.createObjectURL(file);
+      setIsPhotoPreviewLoading(true);
 
       setForm(
         (prev: FormState): FormState => ({
@@ -1369,6 +1371,8 @@ const App: React.FC = () => {
         error: "",
       })
     );
+
+    setIsPhotoPreviewLoading(false);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -3017,16 +3021,30 @@ const App: React.FC = () => {
 
               {form.photo && (
                 <div className="space-y-2">
-                  <img
-                    src={form.photo}
-                    alt="Preview foto"
-                    className="w-full h-64 object-cover rounded-lg border-2 border-green-300"
-                  />
+                  <div className="relative">
+                    <img
+                      src={form.photo}
+                      alt="Preview foto"
+                      onLoad={() => setIsPhotoPreviewLoading(false)}
+                      onError={() => setIsPhotoPreviewLoading(false)}
+                      className="w-full h-64 object-cover rounded-lg border-2 border-green-300"
+                    />
+                    {isPhotoPreviewLoading && (
+                      <div className="absolute inset-0 bg-white bg-opacity-90 flex items-center justify-center rounded-lg border-2 border-green-300">
+                        <div className="text-center">
+                          <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mb-2"></div>
+                          <p className="text-xs text-gray-600">
+                            Memuat preview foto...
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <div className="flex space-x-2">
                     <button
                       type="button"
                       onClick={retakePhoto}
-                      disabled={isCheckingAttendance} // ✅ Disable saat loading
+                      disabled={isCheckingAttendance || isPhotoPreviewLoading} // ✅ Disable saat loading
                       className="flex-1 bg-yellow-600 text-white p-2 rounded-lg hover:bg-yellow-700 transition duration-200 disabled:opacity-50"
                     >
                       📸 Ambil Ulang
@@ -3034,7 +3052,7 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={openCameraApp}
-                      disabled={isCheckingAttendance} // ✅ Disable saat loading
+                      disabled={isCheckingAttendance || isPhotoPreviewLoading} // ✅ Disable saat loading
                       className="flex-1 bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 transition duration-200 disabled:opacity-50"
                     >
                       📷 Foto Lain
@@ -3063,9 +3081,17 @@ const App: React.FC = () => {
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={!form.photoBase64 || form.loading || isCheckingAttendance} // ✅ Disable saat loading
+            disabled={
+              !form.photoBase64 ||
+              form.loading ||
+              isCheckingAttendance ||
+              isPhotoPreviewLoading
+            } // ✅ Disable saat loading
             className={`w-full p-3 rounded-lg transition duration-200 ${
-              !form.photoBase64 || form.loading || isCheckingAttendance
+              !form.photoBase64 ||
+              form.loading ||
+              isCheckingAttendance ||
+              isPhotoPreviewLoading
                 ? "bg-gray-300 text-gray-500 cursor-not-allowed"
                 : "bg-blue-600 text-white hover:bg-blue-700"
             }`}
